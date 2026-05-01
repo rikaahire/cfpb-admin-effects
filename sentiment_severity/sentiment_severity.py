@@ -2,10 +2,17 @@ import pandas as pd
 import numpy as np
 import re
 
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from transformers import pipeline
+import statsmodels.api as sm
+import matplotlib.pyplot as plt
+import seaborn as sns
+import torch
+
 # ----------------------------
 # 1. Load complaints (with narratives)
 # ----------------------------
-max_chunks = 5
+max_chunks = 20
 chunks = []
 
 cols_to_keep = [
@@ -24,7 +31,7 @@ cols_to_keep = [
 
 for i, chunk in enumerate(pd.read_csv(
     "complaints.csv",
-    chunksize=100,
+    chunksize=10000,
     engine="python",
     on_bad_lines="skip"
 )):
@@ -181,22 +188,128 @@ df["keyword_component"] = zscore(df["keyword_hits"])
 df["loss_component"] = zscore(df["dollar_mentions"] + df["numeric_mentions"])
 df["length_component"] = zscore(df["word_count"])
 
-# placeholders for next step
-df["sentiment_vader"] = np.nan
-df["sentiment_transformer"] = np.nan
-df["anger_score"] = np.nan
+# ----------------------------
+# 8. Sentiment analysis: VADER
+# ----------------------------
+analyzer = SentimentIntensityAnalyzer()
+
+df["sentiment_vader"] = df["text_clean"].apply(
+    lambda x: analyzer.polarity_scores(x)["compound"]
+)
+
 
 # ----------------------------
-# 8. Final dataset
+# 9. Sentiment analysis: Transformer
+# ----------------------------
+device = 0 if torch.cuda.is_available() else -1
+
+sentiment_model = pipeline(
+    "sentiment-analysis",
+    model="/scratch/network/.../cfpb/sentiment_model",
+    tokenizer="/scratch/network/.../cfpb/sentiment_model",
+    device=0
+)
+
+texts = df["text_clean"].tolist()
+
+results = sentiment_model(
+    texts,
+    batch_size=128,
+    truncation=True,
+    max_length=512
+)
+
+df["sentiment_transformer"] = [
+    r["score"] if r["label"].upper() == "POSITIVE" else -r["score"]
+    for r in results
+]
+
+
+# ----------------------------
+# 10. Final severity index
+# ----------------------------
+df["negativity_component"] = zscore(-1 * df["sentiment_vader"])
+
+df["severity_index"] = df[
+    [
+        "negativity_component",
+        "keyword_component",
+        "loss_component",
+        "length_component"
+    ]
+].mean(axis=1)
+
+
+# ----------------------------
+# 11. Basic summary results
 # ----------------------------
 df = df.drop_duplicates().reset_index(drop=True)
 
 print("Shape:", df.shape)
+
 print("\nAdministration counts:")
 print(df["administration"].value_counts())
 
-print("\nPreview:")
-print(df.head())
+print("\nMean sentiment by administration:")
+print(df.groupby("administration")["sentiment_vader"].mean())
 
-# optional save
-# df.to_csv("cfpb_preprocessed.csv", index=False)
+print("\nMean severity by administration:")
+print(df.groupby("administration")["severity_index"].mean())
+
+print("\nMean monetary relief by administration:")
+print(df.groupby("administration")["monetary_relief"].mean())
+
+print("\nMean timely response by administration:")
+print(df.groupby("administration")["timely_response_binary"].mean())
+
+
+# ----------------------------
+# 12. Visualization
+# ----------------------------
+sns.boxplot(x="administration", y="severity_index", data=df)
+plt.title("Complaint Severity by Administration")
+plt.xlabel("Administration")
+plt.ylabel("Severity Index")
+plt.show()
+
+
+# ----------------------------
+# 13. Regression: severity predicting monetary relief
+# ----------------------------
+reg_df = df[[
+    "monetary_relief",
+    "severity_index",
+    "administration",
+    "product",
+    "issue"
+]].dropna().copy()
+
+# Convert administration to binary: Trump = 1, Biden = 0
+reg_df["trump_period"] = (reg_df["administration"] == "Trump").astype(int)
+
+# Interaction term
+reg_df["severity_x_trump"] = reg_df["severity_index"] * reg_df["trump_period"]
+
+X = reg_df[[
+    "severity_index",
+    "trump_period",
+    "severity_x_trump"
+]]
+
+X = sm.add_constant(X)
+y = reg_df["monetary_relief"]
+
+if y.nunique() > 1:
+    model = sm.Logit(y, X).fit()
+    print("\nLogistic regression: monetary relief")
+    print(model.summary())
+else:
+    print("\nSkipping logistic regression: monetary_relief has only one class in sample.")
+
+
+# ----------------------------
+# 14. Save final dataset
+# ----------------------------
+df.to_csv("cfpb_sentiment_severity_prepared.csv", index=False)
+
+print("\nSaved file: cfpb_sentiment_severity_prepared_test.csv")
