@@ -9,10 +9,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import torch
 
+import csv
+
 # ----------------------------
 # 1. Load complaints (with narratives)
 # ----------------------------
-max_chunks = 20
+max_chunks = 40
 chunks = []
 
 cols_to_keep = [
@@ -29,22 +31,29 @@ cols_to_keep = [
     "Consumer complaint narrative"
 ]
 
+total_rows = 0
+
 for i, chunk in enumerate(pd.read_csv(
     "complaints.csv",
-    chunksize=10000,
+    usecols=lambda c: c in cols_to_keep,
+    chunksize=100000,
+    on_bad_lines="skip",
     engine="python",
-    on_bad_lines="skip"
+    quoting=csv.QUOTE_NONE,
+    encoding_errors="replace"
 )):
     if i >= max_chunks:
         break
 
-    # Keep only needed columns
-    available_cols = [col for col in cols_to_keep if col in chunk.columns]
-    chunk = chunk[available_cols]
-
     chunks.append(chunk)
+    total_rows += len(chunk)
 
-df = pd.concat(chunks, ignore_index=True)
+    print(f"Loaded chunk {i + 1}, actual rows so far: {total_rows:,}")
+
+if chunks:
+    df = pd.concat(chunks, ignore_index=True)
+else:
+    df = pd.DataFrame()
 
 # ----------------------------
 # 2. Rename columns
