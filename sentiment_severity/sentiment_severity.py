@@ -317,8 +317,123 @@ else:
 
 
 # ----------------------------
-# 14. Save final dataset
+# 14. Product-level analysis
+# ----------------------------
+
+# Keep products with enough observations in both administrations
+min_n = 500
+
+product_summary = (
+    df.groupby(["product", "administration"])
+    .agg(
+        n=("complaint_id", "count"),
+        mean_sentiment=("sentiment_vader", "mean"),
+        mean_severity=("severity_index", "mean"),
+        monetary_relief_rate=("monetary_relief", "mean"),
+        timely_response_rate=("timely_response_binary", "mean")
+    )
+    .reset_index()
+)
+
+# Pivot so Biden and Trump are side-by-side
+product_pivot = product_summary.pivot(
+    index="product",
+    columns="administration",
+    values=[
+        "n",
+        "mean_sentiment",
+        "mean_severity",
+        "monetary_relief_rate",
+        "timely_response_rate"
+    ]
+)
+
+# Flatten column names
+product_pivot.columns = [
+    f"{metric}_{admin}" for metric, admin in product_pivot.columns
+]
+
+product_pivot = product_pivot.reset_index()
+
+# Keep only products with enough Biden and Trump complaints
+product_pivot = product_pivot[
+    (product_pivot["n_Biden"] >= min_n) &
+    (product_pivot["n_Trump"] >= min_n)
+].copy()
+
+# Calculate Trump - Biden differences
+product_pivot["sentiment_change_trump_minus_biden"] = (
+    product_pivot["mean_sentiment_Trump"] - product_pivot["mean_sentiment_Biden"]
+)
+
+product_pivot["severity_change_trump_minus_biden"] = (
+    product_pivot["mean_severity_Trump"] - product_pivot["mean_severity_Biden"]
+)
+
+product_pivot["monetary_relief_change_trump_minus_biden"] = (
+    product_pivot["monetary_relief_rate_Trump"] - product_pivot["monetary_relief_rate_Biden"]
+)
+
+product_pivot["timely_response_change_trump_minus_biden"] = (
+    product_pivot["timely_response_rate_Trump"] - product_pivot["timely_response_rate_Biden"]
+)
+
+print("\nProduct-level differences: Trump minus Biden")
+print(product_pivot[[
+    "product",
+    "n_Biden",
+    "n_Trump",
+    "mean_sentiment_Biden",
+    "mean_sentiment_Trump",
+    "sentiment_change_trump_minus_biden",
+    "mean_severity_Biden",
+    "mean_severity_Trump",
+    "severity_change_trump_minus_biden",
+    "monetary_relief_change_trump_minus_biden",
+    "timely_response_change_trump_minus_biden"
+]].sort_values("severity_change_trump_minus_biden", ascending=False).head(15))
+
+# Products with largest increase in severity under Trump
+top_severity_increases = product_pivot.sort_values(
+    "severity_change_trump_minus_biden",
+    ascending=False
+).head(10)
+
+# Products with largest decrease in sentiment under Trump
+# More negative = lower sentiment, so sort ascending
+top_sentiment_declines = product_pivot.sort_values(
+    "sentiment_change_trump_minus_biden",
+    ascending=True
+).head(10)
+
+print("\nTop products with largest severity increase under Trump:")
+print(top_severity_increases[[
+    "product",
+    "severity_change_trump_minus_biden",
+    "mean_severity_Biden",
+    "mean_severity_Trump",
+    "n_Biden",
+    "n_Trump"
+]])
+
+print("\nTop products with largest sentiment decline under Trump:")
+print(top_sentiment_declines[[
+    "product",
+    "sentiment_change_trump_minus_biden",
+    "mean_sentiment_Biden",
+    "mean_sentiment_Trump",
+    "n_Biden",
+    "n_Trump"
+]])
+
+# Save product-level table
+product_pivot.to_csv("cfpb_product_level_analysis.csv", index=False)
+
+print("\nSaved file: cfpb_product_level_analysis.csv")
+
+
+# ----------------------------
+# 15. Save final dataset
 # ----------------------------
 df.to_csv("cfpb_sentiment_severity_prepared.csv", index=False)
-
-print("\nSaved file: cfpb_sentiment_severity_prepared_test.csv")
+print("\nSaved file: cfpb_sentiment_severity_prepared.csv")
