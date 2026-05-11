@@ -1,1 +1,1 @@
-# Investigating the Consumer Financial Protection Bureau’s Consumer Complaint Database
+# Consumer Complaint Dynamics and Firm Behavior Across Regulatory Regimes
