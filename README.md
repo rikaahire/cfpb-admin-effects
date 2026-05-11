@@ -1,1 +1,1 @@
-# Consumer Complaint Dynamics and Firm Behavior Across Regulatory Regimes
+# Analyzing Consumer Financial Protection Bureau Complaint Data Across Regulatory Regimes
